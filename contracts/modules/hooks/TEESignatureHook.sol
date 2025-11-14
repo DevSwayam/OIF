@@ -88,7 +88,7 @@ contract TEESignatureHook is IHook {
 
     /// @notice Installs the module on an account
     /// @param data Unused (no initialization data needed)
-    function onInstall(bytes calldata data) external override {
+    function onInstall(bytes calldata /* data */) external override {
         require(!isInitialized(msg.sender), ModuleAlreadyInitialized());
         installed[msg.sender] = true;
         emit HookInstalled(msg.sender);
@@ -134,12 +134,12 @@ contract TEESignatureHook is IHook {
         address account = msg.sender; // msg.sender is the account calling this hook
 
         // Check if TEE is alive/online
-        bool isTEEAlive = teeAliveContract.getIsAlive();
+        bool teeStatus = teeAliveContract.getIsAlive();
 
-        if (!isTEEAlive) {
+        if (!teeStatus) {
             // TEE is offline - bypass signature verification
-            bytes32 executionHash = keccak256(abi.encodePacked(msgSender, msgValue, msgData));
-            emit TEEVerificationBypassed(account, executionHash);
+            bytes32 bypassHash = keccak256(abi.encodePacked(msgSender, msgValue, msgData));
+            emit TEEVerificationBypassed(account, bypassHash);
             return ""; // No TEE verification needed
         }
 

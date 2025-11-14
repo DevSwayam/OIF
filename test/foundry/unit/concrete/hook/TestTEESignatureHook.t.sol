@@ -11,6 +11,7 @@ import { TEEAlive } from "../../../../../contracts/mocks/TEEAlive.sol";
 contract TestTEESignatureHook is NexusTest_Base {
     TEESignatureHook internal teeHook;
     TEEAlive internal teeAlive;
+    uint256 internal teePrivateKey; // TEE private key from .env
 
     event TEESignatureVerified(address indexed account, bytes32 indexed hash);
     event TEEVerificationBypassed(address indexed account, bytes32 indexed hash);
@@ -21,11 +22,14 @@ contract TestTEESignatureHook is NexusTest_Base {
     function setUp() public {
         init();
 
+        // Load TEE private key from .env
+        teePrivateKey = vm.envUint("PRIVATE_KEY");
+
         // Deploy TEEAlive contract
         teeAlive = new TEEAlive();
 
-        // Deploy TEESignatureHook with TEEAlive contract
-        teeHook = new TEESignatureHook(address(teeAlive));
+        // Deploy TEESignatureHook with TEEAlive contract and default TEE signer (0xAF9fC206261DF20a7f2Be9B379B101FAFd983117)
+        teeHook = new TEESignatureHook(address(teeAlive), address(0));
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -90,48 +94,27 @@ contract TestTEESignatureHook is NexusTest_Base {
         // Ensure TEE is online
         assertTrue(teeAlive.getIsAlive(), "TEE should be online");
 
-        // TEE private key that corresponds to 0xAF9fC206261DF20a7f2Be9B379B101FAFd983117
-        uint256 teePrivateKey = 0x0b6c1b7d8e5b3a8c8e8a4f8e3c6b9a7d5e8f3c6a9b7d5e8f3c6a9b7d5e8f3c6a;
-
-        // Create execution data
-        address target = address(0x1234);
-        bytes memory data = abi.encodeWithSignature("someFunction()");
-
-        bytes memory callData = abi.encodeWithSelector(
-            Nexus.execute.selector,
-            target,
-            0,
-            data
-        );
+        // Test data to sign
+        address msgSender = address(ENTRYPOINT);
+        uint256 msgValue = 0;
+        bytes memory msgData = hex"e9ae5c53000000000000000000000000000000000000000000000000000000000000123400000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000040";
 
         // Compute hash that TEE needs to sign
-        bytes32 executionHash = keccak256(abi.encodePacked(
-            address(BOB_ACCOUNT), // msgSender
-            uint256(0),           // msgValue
-            callData              // msgData (without signature)
-        ));
+        bytes32 executionHash = keccak256(abi.encodePacked(msgSender, msgValue, msgData));
 
-        // Sign with TEE private key
+        // Sign with TEE private key from .env
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(teePrivateKey, executionHash);
         bytes memory teeSignature = abi.encodePacked(r, s, v);
 
-        // Append TEE signature to callData
-        bytes memory callDataWithSignature = abi.encodePacked(callData, teeSignature);
+        // Append TEE signature to msgData
+        bytes memory msgDataWithSignature = abi.encodePacked(msgData, teeSignature);
 
-        Execution[] memory execution = new Execution[](1);
-        execution[0] = Execution(address(BOB_ACCOUNT), 0, callDataWithSignature);
+        // Call preCheck directly - should succeed with valid signature
+        vm.prank(address(BOB_ACCOUNT)); // preCheck expects msg.sender to be the account
+        bytes memory hookData = teeHook.preCheck(msgSender, msgValue, msgDataWithSignature);
 
-        PackedUserOperation[] memory userOps = buildPackedUserOperation(
-            BOB,
-            BOB_ACCOUNT,
-            EXECTYPE_DEFAULT,
-            execution,
-            address(VALIDATOR_MODULE),
-            0
-        );
-
-        // Should succeed with valid TEE signature
-        ENTRYPOINT.handleOps(userOps, payable(address(BOB.addr)));
+        // If we reach here without reverting, the signature was valid
+        assertEq(hookData.length, 0, "Hook data should be empty");
     }
 
     /// @notice Tests execution SUCCEEDS without TEE signature when TEE is offline

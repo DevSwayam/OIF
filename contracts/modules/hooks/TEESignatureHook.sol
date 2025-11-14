@@ -74,11 +74,16 @@ contract TEESignatureHook is IHook {
                                 CONSTRUCTOR
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Creates a new TEE Signature Hook with a fixed TEE signer address and TEEAlive contract
+    /// @notice Creates a new TEE Signature Hook with a TEE signer address and TEEAlive contract
     /// @dev The TEE signer address and TEEAlive contract are immutable and set at deployment
     /// @param _teeAliveContract Address of the TEEAlive contract to check TEE status
-    constructor(address _teeAliveContract) {
-        teeSignerAddress = 0xAF9fC206261DF20a7f2Be9B379B101FAFd983117;
+    /// @param _teeSignerAddress Address of the TEE signer (use address(0) for default: 0xAF9fC206261DF20a7f2Be9B379B101FAFd983117)
+    constructor(address _teeAliveContract, address _teeSignerAddress) {
+        if (_teeSignerAddress == address(0)) {
+            teeSignerAddress = 0xAF9fC206261DF20a7f2Be9B379B101FAFd983117; // Default production address
+        } else {
+            teeSignerAddress = _teeSignerAddress; // Custom address for testing
+        }
         teeAliveContract = ITEEAlive(_teeAliveContract);
     }
 

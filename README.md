@@ -420,6 +420,125 @@ Escrow releases assets
 | Zenith           | 03-2025 | [View Report](./audits/Biconomy-Nexus_Zenith-Audit-Report.pdf) |
 | Pashov           | 03-2025 | [View Report](./audits/Nexus-Pashov-Review_2025-03.pdf) |
 
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+#### 1. Git Submodules Not Initialized
+**Error**: Missing files in `lib/` directory or compilation errors about missing imports.
+
+**Solution**:
+```bash
+git submodule update --init --recursive
+```
+
+#### 2. NPM Dependency Conflicts
+**Error**: `ERESOLVE unable to resolve dependency tree`
+
+**Solution**:
+```bash
+npm install --legacy-peer-deps
+```
+
+#### 3. Compilation Errors with EVM Version
+**Error**: Unsupported opcodes or EVM version errors
+
+**Solution**: Ensure `foundry.toml` has `evm_version = "cancun"` (not "prague")
+
+#### 4. Import Resolution Failures
+**Error**: `Unable to resolve imports`
+
+**Solution**: Check `remappings.txt` has the correct paths:
+```bash
+forge remappings  # View current remappings
+```
+
+#### 5. Test Failures with Reentrancy Error
+**Error**: Tests fail with `Reentrancy()` during `setUp()`
+
+**Current Status**: Known issue affecting 54 tests. Tests that don't involve EntryPoint account deployment work correctly.
+
+**Workaround**: Run only passing tests:
+```bash
+forge test --match-test test_WhenCheckingTheAccountID
+```
+
+### Clearing Build Artifacts
+
+If you encounter strange compilation or test issues:
+
+```bash
+# Clean Foundry artifacts
+forge clean
+
+# Rebuild
+forge build
+
+# Clean node_modules (nuclear option)
+rm -rf node_modules
+npm install --legacy-peer-deps
+```
+
+## 📚 Resources and Documentation
+
+### ERC Standards
+- [ERC-4337: Account Abstraction](https://eips.ethereum.org/EIPS/eip-4337)
+- [ERC-7579: Minimal Modular Smart Accounts](https://eips.ethereum.org/EIPS/eip-7579)
+- [ERC-1271: Standard Signature Validation](https://eips.ethereum.org/EIPS/eip-1271)
+- [ERC-712: Typed Structured Data Hashing](https://eips.ethereum.org/EIPS/eip-712)
+
+### Development Tools
+- [Foundry Book](https://book.getfoundry.sh/) - Comprehensive Foundry documentation
+- [Hardhat Documentation](https://hardhat.org/docs) - Hardhat development environment
+- [OpenZeppelin Contracts](https://docs.openzeppelin.com/contracts/) - Secure smart contract library
+- [Solady Documentation](https://github.com/Vectorized/solady) - Gas-optimized Solidity utilities
+
+### Biconomy Resources
+- [Biconomy Documentation](https://docs.biconomy.io/)
+- [Nexus GitHub](https://github.com/bcnmy/nexus)
+- [Nexus Wiki](https://github.com/bcnmy/nexus/wiki)
+
+### Account Abstraction Resources
+- [ERC-4337 Official Site](https://www.erc4337.io/)
+- [Account Abstraction GitHub](https://github.com/eth-infinitism/account-abstraction)
+- [Bundler Specification](https://github.com/eth-infinitism/bundler-spec)
+
+## 🤝 Contributing
+
+When contributing to this repository:
+
+1. **Fork the repository** and create your branch from `main`
+2. **Write tests** for any new features or bug fixes
+3. **Ensure all tests pass**: Run `forge test` and `yarn test`
+4. **Follow the existing code style**: Use `yarn lint` to check
+5. **Update documentation**: Keep README and NatSpec comments current
+6. **Submit a pull request** with a clear description of changes
+
+### Development Workflow
+
+```bash
+# 1. Create a feature branch
+git checkout -b feature/your-feature-name
+
+# 2. Make your changes
+# Edit contracts in contracts/
+# Add tests in test/foundry/unit/
+
+# 3. Test your changes
+forge build
+forge test
+
+# 4. Check code style
+yarn lint
+
+# 5. Commit and push
+git add .
+git commit -m "feat: add your feature description"
+git push origin feature/your-feature-name
+
+# 6. Open a pull request on GitHub
+```
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.

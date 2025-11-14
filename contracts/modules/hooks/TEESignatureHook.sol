@@ -16,6 +16,12 @@ import { IHook } from "../../interfaces/modules/IHook.sol";
 import { MODULE_TYPE_HOOK } from "../../types/Constants.sol";
 import { ECDSA } from "solady/utils/ECDSA.sol";
 
+/// @title ITEEAlive Interface
+/// @notice Interface for checking if TEE is alive/online
+interface ITEEAlive {
+    function getIsAlive() external view returns (bool);
+}
+
 /// @title TEE Signature Hook
 /// @notice A pre-execution hook that requires TEE (Trusted Execution Environment) signatures
 ///         before allowing any execution on an account
@@ -28,8 +34,11 @@ contract TEESignatureHook is IHook {
                             CONSTANTS & STORAGE
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice The fixed TEE public key address that signs all transactions
-    address public immutable teePublicKey;
+    /// @notice The fixed TEE signer address (recovered from signature verification)
+    address public immutable teeSignerAddress;
+
+    /// @notice The TEEAlive contract to check if TEE is online
+    ITEEAlive public immutable teeAliveContract;
 
     /// @notice Mapping to track which accounts have this hook installed
     mapping(address => bool) private installed;
@@ -43,6 +52,9 @@ contract TEESignatureHook is IHook {
 
     /// @notice Event emitted when a TEE signature is successfully verified
     event TEESignatureVerified(address indexed account, bytes32 indexed hash);
+
+    /// @notice Event emitted when TEE verification is bypassed because TEE is offline
+    event TEEVerificationBypassed(address indexed account, bytes32 indexed hash);
 
     /// @notice Event emitted when the hook is installed on an account
     event HookInstalled(address indexed account);
@@ -59,26 +71,33 @@ contract TEESignatureHook is IHook {
     error InvalidTEESignature();
 
     /*//////////////////////////////////////////////////////////////////////////
+                                CONSTRUCTOR
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice Creates a new TEE Signature Hook with a fixed TEE signer address and TEEAlive contract
+    /// @dev The TEE signer address and TEEAlive contract are immutable and set at deployment
+    /// @param _teeAliveContract Address of the TEEAlive contract to check TEE status
+    constructor(address _teeAliveContract) {
+        teeSignerAddress = 0xAF9fC206261DF20a7f2Be9B379B101FAFd983117;
+        teeAliveContract = ITEEAlive(_teeAliveContract);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
                             MODULE LIFECYCLE
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Installs the module and registers the TEE public key
-    /// @param data ABI-encoded TEE public key address (20 bytes)
+    /// @notice Installs the module on an account
+    /// @param data Unused (no initialization data needed)
     function onInstall(bytes calldata data) external override {
-        require(data.length == 20, NoTEEPublicKeyProvided());
         require(!isInitialized(msg.sender), ModuleAlreadyInitialized());
-
-        address teePublicKey = address(bytes20(data));
-        require(teePublicKey != address(0), InvalidTEEPublicKey());
-
-        teePublicKeys[msg.sender] = teePublicKey;
-        emit TEEPublicKeySet(msg.sender, teePublicKey);
+        installed[msg.sender] = true;
+        emit HookInstalled(msg.sender);
     }
 
-    /// @notice Uninstalls the module and removes the TEE public key
+    /// @notice Uninstalls the module from an account
     function onUninstall(bytes calldata) external override {
-        delete teePublicKeys[msg.sender];
-        emit TEEPublicKeySet(msg.sender, address(0));
+        installed[msg.sender] = false;
+        emit HookUninstalled(msg.sender);
     }
 
     /// @notice Checks if the module matches the HOOK module type
@@ -88,19 +107,20 @@ contract TEESignatureHook is IHook {
 
     /// @notice Checks if the module is initialized for an account
     function isInitialized(address smartAccount) public view returns (bool) {
-        return teePublicKeys[smartAccount] != address(0);
+        return installed[smartAccount];
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                         HOOK EXECUTION LOGIC
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Pre-execution check that verifies TEE signature
-    /// @dev Expects msgData to have TEE signature appended at the end (last 65 bytes)
+    /// @notice Pre-execution check that verifies TEE signature if TEE is online
+    /// @dev If TEE is offline (getIsAlive() returns false), signature verification is bypassed
+    ///      If TEE is online, expects msgData to have TEE signature appended at the end (last 65 bytes)
     ///      TEE signature is over: keccak256(abi.encodePacked(msgSender, msgValue, actualMsgData))
     /// @param msgSender The original sender of the transaction
     /// @param msgValue The amount of wei sent with the call
-    /// @param msgData The calldata with TEE signature appended at the end
+    /// @param msgData The calldata (with optional TEE signature appended if TEE is online)
     /// @return hookData Empty bytes (not used in postCheck)
     function preCheck(
         address msgSender,
@@ -112,9 +132,18 @@ contract TEESignatureHook is IHook {
         returns (bytes memory hookData)
     {
         address account = msg.sender; // msg.sender is the account calling this hook
-        address teePublicKey = teePublicKeys[account];
 
-        require(teePublicKey != address(0), NoTEEPublicKeyRegistered());
+        // Check if TEE is alive/online
+        bool isTEEAlive = teeAliveContract.getIsAlive();
+
+        if (!isTEEAlive) {
+            // TEE is offline - bypass signature verification
+            bytes32 executionHash = keccak256(abi.encodePacked(msgSender, msgValue, msgData));
+            emit TEEVerificationBypassed(account, executionHash);
+            return ""; // No TEE verification needed
+        }
+
+        // TEE is online - require and verify TEE signature
         require(msgData.length >= TEE_SIGNATURE_LENGTH, SignatureTooShort());
 
         // Extract actual execution data (everything except last 65 bytes)
@@ -126,9 +155,9 @@ contract TEESignatureHook is IHook {
         // Compute hash of execution data
         bytes32 executionHash = keccak256(abi.encodePacked(msgSender, msgValue, actualMsgData));
 
-        // Verify TEE signature
+        // Verify TEE signature by recovering signer address
         address recoveredSigner = executionHash.recover(teeSignature);
-        require(recoveredSigner == teePublicKey, InvalidTEESignature());
+        require(recoveredSigner == teeSignerAddress, InvalidTEESignature());
 
         emit TEESignatureVerified(account, executionHash);
 
@@ -145,17 +174,21 @@ contract TEESignatureHook is IHook {
                         PUBLIC VIEW FUNCTIONS
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Gets the TEE public key for a specific account
-    function getTEEPublicKey(address account) external view returns (address) {
-        return teePublicKeys[account];
+    /// @notice Gets the fixed TEE signer address used by this hook
+    /// @return The TEE signer address
+    function getTEESignerAddress() external view returns (address) {
+        return teeSignerAddress;
     }
 
-    /// @notice Updates the TEE public key for the calling account
-    function updateTEEPublicKey(address newTEEPublicKey) external {
-        require(newTEEPublicKey != address(0), InvalidTEEPublicKey());
-        require(isInitialized(msg.sender), NoTEEPublicKeyRegistered());
+    /// @notice Gets the TEEAlive contract address
+    /// @return The TEEAlive contract address
+    function getTEEAliveContract() external view returns (address) {
+        return address(teeAliveContract);
+    }
 
-        teePublicKeys[msg.sender] = newTEEPublicKey;
-        emit TEEPublicKeySet(msg.sender, newTEEPublicKey);
+    /// @notice Checks if TEE is currently alive/online
+    /// @return True if TEE is online, false otherwise
+    function isTEEAlive() external view returns (bool) {
+        return teeAliveContract.getIsAlive();
     }
 }

@@ -97,5 +97,8 @@
       "post-checkout": "yarn run check-branch-name && yarn install && forge install"
     }
   },
-  "packageManager": "yarn@1.22.22"
+  "packageManager": "yarn@1.22.22",
+  "dependencies": {
+    "accountabstraction": "github:eth-infinitism/account-abstraction#v0.7.0"
+  }
 }

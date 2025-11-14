@@ -1,5 +1,13 @@
-@openzeppelin/=node_modules/@openzeppelin/
-forge-std/=node_modules/forge-std/src/
+ds-test/=lib/forge-std/lib/ds-test/src/
+forge-std/=lib/forge-std/src/
+the-compact/=lib/the-compact/
+permit2/=lib/permit2/
+openzeppelin/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/=lib/openzeppelin-contracts/
+@eth-optimism/=lib/@eth-optimism/
+broadcaster/=lib/broadcaster/src/contracts/
+broadcaster-test/=lib/broadcaster/test/
+src/=contracts/
 account-abstraction/=node_modules/account-abstraction/contracts/
 solady/=node_modules/solady/src/
 excessively-safe-call/=node_modules/excessively-safe-call/src/

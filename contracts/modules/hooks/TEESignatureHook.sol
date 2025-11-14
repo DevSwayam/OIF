@@ -87,7 +87,6 @@ contract TEESignatureHook is IHook {
     //////////////////////////////////////////////////////////////////////////*/
 
     /// @notice Installs the module on an account
-    /// @param data Unused (no initialization data needed)
     function onInstall(bytes calldata /* data */) external override {
         require(!isInitialized(msg.sender), ModuleAlreadyInitialized());
         installed[msg.sender] = true;

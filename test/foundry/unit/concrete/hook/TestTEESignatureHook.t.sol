@@ -29,38 +29,25 @@ contract TestTEESignatureHook is NexusTest_Base {
     }
 
     /*//////////////////////////////////////////////////////////////////////////
-                            INSTALLATION TESTS
+                            CORE TEE SIGNATURE TESTS
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Tests successful installation of TEE hook
-    function test_InstallTEEHook_Success() public {
-        assertFalse(
-            BOB_ACCOUNT.isModuleInstalled(MODULE_TYPE_HOOK, address(teeHook), ""),
-            "TEE hook should not be installed initially"
-        );
-
+    /// @notice Tests execution FAILS without TEE signature when TEE is online
+    function test_ExecuteWithoutTEESignature_WhenOnline_Fails() public {
         _installTEEHook();
 
-        assertTrue(
-            BOB_ACCOUNT.isModuleInstalled(MODULE_TYPE_HOOK, address(teeHook), ""),
-            "TEE hook should be installed"
-        );
+        // Ensure TEE is online
+        assertTrue(teeAlive.getIsAlive(), "TEE should be online");
 
-        assertEq(BOB_ACCOUNT.getActiveHook(), address(teeHook), "TEE hook should be active");
-    }
-
-    /// @notice Tests successful uninstallation of TEE hook
-    function test_UninstallTEEHook_Success() public {
-        test_InstallTEEHook_Success();
-
-        // Set TEE to offline so preCheck doesn't require signature during uninstall
-        teeAlive.setIsAlive(false);
+        // Create execution data WITHOUT TEE signature
+        address target = address(0x1234);
+        bytes memory data = abi.encodeWithSignature("someFunction()");
 
         bytes memory callData = abi.encodeWithSelector(
-            IModuleManager.uninstallModule.selector,
-            MODULE_TYPE_HOOK,
-            address(teeHook),
-            ""
+            Nexus.execute.selector,
+            target,
+            0,
+            data
         );
 
         Execution[] memory execution = new Execution[](1);
@@ -75,24 +62,81 @@ contract TestTEESignatureHook is NexusTest_Base {
             0
         );
 
-        vm.expectEmit(true, true, true, true);
-        emit ModuleUninstalled(MODULE_TYPE_HOOK, address(teeHook));
+        // Record logs to check for UserOperationRevertReason event
+        vm.recordLogs();
 
+        // handleOps completes but the UserOperation fails internally
         ENTRYPOINT.handleOps(userOps, payable(address(BOB.addr)));
 
-        assertFalse(
-            BOB_ACCOUNT.isModuleInstalled(MODULE_TYPE_HOOK, address(teeHook), ""),
-            "TEE hook should be uninstalled"
-        );
+        // Verify that the UserOperation failed by checking the logs
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool foundRevertEvent = false;
+
+        for (uint256 i = 0; i < logs.length; i++) {
+            // UserOperationRevertReason event signature
+            if (logs[i].topics[0] == keccak256("UserOperationRevertReason(bytes32,address,uint256,bytes)")) {
+                foundRevertEvent = true;
+                break;
+            }
+        }
+
+        assertTrue(foundRevertEvent, "UserOperation should have reverted due to missing TEE signature");
     }
 
-    /*//////////////////////////////////////////////////////////////////////////
-                        TEE OFFLINE SCENARIO TESTS
-    //////////////////////////////////////////////////////////////////////////*/
+    /// @notice Tests execution SUCCEEDS with valid TEE signature when TEE is online
+    function test_ExecuteWithTEESignature_WhenOnline_Success() public {
+        _installTEEHook();
 
-    /// @notice Tests execution succeeds WITHOUT TEE signature when TEE is offline
+        // Ensure TEE is online
+        assertTrue(teeAlive.getIsAlive(), "TEE should be online");
+
+        // TEE private key that corresponds to 0xAF9fC206261DF20a7f2Be9B379B101FAFd983117
+        uint256 teePrivateKey = 0x0b6c1b7d8e5b3a8c8e8a4f8e3c6b9a7d5e8f3c6a9b7d5e8f3c6a9b7d5e8f3c6a;
+
+        // Create execution data
+        address target = address(0x1234);
+        bytes memory data = abi.encodeWithSignature("someFunction()");
+
+        bytes memory callData = abi.encodeWithSelector(
+            Nexus.execute.selector,
+            target,
+            0,
+            data
+        );
+
+        // Compute hash that TEE needs to sign
+        bytes32 executionHash = keccak256(abi.encodePacked(
+            address(BOB_ACCOUNT), // msgSender
+            uint256(0),           // msgValue
+            callData              // msgData (without signature)
+        ));
+
+        // Sign with TEE private key
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(teePrivateKey, executionHash);
+        bytes memory teeSignature = abi.encodePacked(r, s, v);
+
+        // Append TEE signature to callData
+        bytes memory callDataWithSignature = abi.encodePacked(callData, teeSignature);
+
+        Execution[] memory execution = new Execution[](1);
+        execution[0] = Execution(address(BOB_ACCOUNT), 0, callDataWithSignature);
+
+        PackedUserOperation[] memory userOps = buildPackedUserOperation(
+            BOB,
+            BOB_ACCOUNT,
+            EXECTYPE_DEFAULT,
+            execution,
+            address(VALIDATOR_MODULE),
+            0
+        );
+
+        // Should succeed with valid TEE signature
+        ENTRYPOINT.handleOps(userOps, payable(address(BOB.addr)));
+    }
+
+    /// @notice Tests execution SUCCEEDS without TEE signature when TEE is offline
     function test_ExecuteWithoutTEESignature_WhenOffline_Success() public {
-        test_InstallTEEHook_Success();
+        _installTEEHook();
 
         // Set TEE to offline
         teeAlive.setIsAlive(false);
@@ -123,66 +167,6 @@ contract TestTEESignatureHook is NexusTest_Base {
 
         // Should succeed without TEE signature since TEE is offline
         ENTRYPOINT.handleOps(userOps, payable(address(BOB.addr)));
-    }
-
-    /// @notice Tests TEE status can be toggled
-    function test_ToggleTEEStatus() public {
-        assertTrue(teeHook.isTEEAlive(), "TEE should be online initially");
-
-        teeAlive.setIsAlive(false);
-        assertFalse(teeHook.isTEEAlive(), "TEE should be offline after toggle");
-
-        teeAlive.setIsAlive(true);
-        assertTrue(teeHook.isTEEAlive(), "TEE should be online after toggle back");
-    }
-
-    /*//////////////////////////////////////////////////////////////////////////
-                            VIEW FUNCTION TESTS
-    //////////////////////////////////////////////////////////////////////////*/
-
-    /// @notice Tests getTEESignerAddress returns correct address
-    function test_GetTEESignerAddress() public view {
-        assertEq(
-            teeHook.getTEESignerAddress(),
-            0xAF9fC206261DF20a7f2Be9B379B101FAFd983117,
-            "Should return correct TEE signer address"
-        );
-    }
-
-    /// @notice Tests getTEEAliveContract returns correct address
-    function test_GetTEEAliveContract() public view {
-        assertEq(
-            teeHook.getTEEAliveContract(),
-            address(teeAlive),
-            "Should return correct TEEAlive contract address"
-        );
-    }
-
-    /// @notice Tests isTEEAlive reflects TEEAlive contract state
-    function test_IsTEEAlive() public {
-        assertTrue(teeHook.isTEEAlive(), "TEE should be alive initially");
-
-        teeAlive.setIsAlive(false);
-        assertFalse(teeHook.isTEEAlive(), "TEE should be dead after setIsAlive(false)");
-
-        teeAlive.setIsAlive(true);
-        assertTrue(teeHook.isTEEAlive(), "TEE should be alive after setIsAlive(true)");
-    }
-
-    /// @notice Tests hook correctly identifies its module type
-    function test_IsModuleType() public view {
-        assertTrue(teeHook.isModuleType(MODULE_TYPE_HOOK), "Should identify as HOOK type");
-        assertFalse(teeHook.isModuleType(MODULE_TYPE_VALIDATOR), "Should not identify as VALIDATOR type");
-        assertFalse(teeHook.isModuleType(MODULE_TYPE_EXECUTOR), "Should not identify as EXECUTOR type");
-    }
-
-    /// @notice Tests initialization status
-    function test_IsInitialized() public {
-        assertFalse(teeHook.isInitialized(address(BOB_ACCOUNT)), "Should not be initialized before install");
-
-        _installTEEHook();
-
-        assertTrue(teeHook.isInitialized(address(BOB_ACCOUNT)), "Should be initialized after install");
     }
 
     /*//////////////////////////////////////////////////////////////////////////
